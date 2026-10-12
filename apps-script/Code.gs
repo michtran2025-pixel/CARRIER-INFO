@@ -38,8 +38,16 @@ const PORTS = {
   'ROTTERDAM': 'NLRTM', 'HAMBURG': 'DEHAM',
   // mã viết tắt / mã cũ hay gặp trong lịch hãng
   'HPH': 'VNHPH', 'SHK': 'CNSHK', 'LCH': 'THLCH', 'BKK': 'THBKK', 'HKG': 'HKHKG', 'NSA': 'INNSA', 'PAV': 'INPAV',
-  'KRICH': 'KRINC', 'SIN': 'SGSIN', 'PKG': 'MYPKG', 'JKT': 'IDJKT', 'SUB': 'IDSUB', 'MNL': 'PHMNL', 'INC': 'KRINC', 'PUS': 'KRPUS'
+  'KRICH': 'KRINC', 'SIN': 'SGSIN', 'PKG': 'MYPKG', 'JKT': 'IDJKT', 'SUB': 'IDSUB', 'MNL': 'PHMNL', 'INC': 'KRINC', 'PUS': 'KRPUS',
+  // tên cảng trong file text lịch Evergreen (ShipmentLink, tên bị cắt còn 15 ký tự)
+  'DA NANG': 'VNDAD', 'QUI NHON': 'VNUIH', 'PUSAN': 'KRPUS', 'GWANG YANG': 'KRKAN', 'HAKATA': 'JPHKT', 'SHIMIZU': 'JPSMZ',
+  'NAGOYA': 'JPNGO', 'TAIPEI': 'TWTPE', 'KEELUNG': 'TWKEL', 'TAICHUNG': 'TWTXG', 'XIAMEN': 'CNXMN', 'QINGDAO': 'CNTAO',
+  'YANTIAN': 'CNYTN', 'NANSHA': 'CNNSA', 'QINZHOU': 'CNQZH', 'ZHANJIANG': 'CNZHA', 'XINGANG': 'CNXGG', 'DALIAN': 'CNDLC',
+  'PORT KLANG WEST': 'MYPKG', 'PORT KLANG NORT': 'MYPKG', 'TANJUNG PELEPAS': 'MYTPP', 'PASIR GUDANG': 'MYPGU',
+  'KUANTAN': 'MYKUA', 'SEMARANG': 'IDSRG', 'MANILA (NORTH P': 'PHMNN', 'CEBU': 'PHCEB'
 };
+// POL được lấy từ file lịch dạng bảng tuyến của hãng (file text Evergreen): chỉ nhập chuyến đi từ các cảng này
+const HOME_POLS = ['VNHPH'];
 const TERM_CODES = { VNDVN: 'Nam Dinh Vu', VNTVU: 'Tan Vu', THTIP: 'TIPS (Laem Chabang)', THTST: 'TST (Bangkok)', TST: 'TST (Bangkok)' };
 function terminalCode_(v) { const s = norm_(v); return TERM_CODES[s] || String(v || '').trim(); }
 const TERMINALS = {
@@ -132,6 +140,10 @@ function readSheets_(file) {
   const mt = file.getMimeType();
   const fromSs = id => SpreadsheetApp.openById(id).getSheets().map(sh => ({ name: sh.getName(), values: sh.getDataRange().getValues() }));
   if (mt === MimeType.GOOGLE_SHEETS) return fromSs(file.getId());
+  if (mt === MimeType.PLAIN_TEXT || /\.txt$/i.test(file.getName())) {
+    const text = file.getBlob().getDataAsString('UTF-8').replace(/\r/g, '');
+    return [{ name: 'txt', text, values: text.split('\n').map(l => [l]) }];
+  }
   if (mt === MimeType.CSV || /\.csv$/i.test(file.getName())) {
     return [{ name: 'csv', values: Utilities.parseCsv(file.getBlob().getDataAsString('UTF-8')) }];
   }
@@ -140,7 +152,7 @@ function readSheets_(file) {
     const tmp = Drive.Files.create({ name: 'tmp_' + file.getName(), mimeType: MimeType.GOOGLE_SHEETS }, file.getBlob());
     try { return fromSs(tmp.id); } finally { DriveApp.getFileById(tmp.id).setTrashed(true); }
   }
-  throw new Error('Định dạng chưa hỗ trợ (' + mt + '). Dùng Excel/CSV, hoặc dán vào sheet MAU_NHAP.');
+  throw new Error('Định dạng chưa hỗ trợ (' + mt + '). Dùng Excel/CSV/TXT, hoặc dán vào sheet MAU_NHAP.');
 }
 
 // ------------------------------------------------------------------ PARSE WHOLE FILE (thử mọi sheet, mọi bộ đọc)
@@ -149,6 +161,15 @@ function parseFile_(sheets, fileName) {
   let found = false;
   const deps = {};
   const legend = {};
+  const emc = sheets.filter(s => s.text && /ShipmentLink Sailing Schedules/.test(s.text));
+  if (emc.length) {                                   // file text lịch Evergreen tải từ ShipmentLink
+    emc.forEach(s => { recs = recs.concat(parseEmcText_(s.text, fileName)); });
+    if (!recs.length) throw new Error('File lịch Evergreen không có chuyến nào đi từ ' + HOME_POLS.join(', ') + '.');
+    const out = dedupeBest_(recs);
+    out.legend = legend;
+    return out;
+  }
+  if (sheets.some(s => s.text)) throw new Error('Chưa có bộ đọc cho file text này. Gửi 1 file mẫu cho Claude để thêm.');
   sheets.forEach(s => { collectDepartures_(s.values, deps); collectLegend_(s.values, legend); });
   sheets.forEach(s => {
     try { recs = recs.concat(parseGrid_(s.values, fileName)); found = true; return; } catch (e) { /* thử bộ đọc bảng tuyến */ }
@@ -365,6 +386,74 @@ function parseRouteTables_(g, fileName) {
   return out;
 }
 
+// ------------------------------------------------------------------ PARSER: FILE TEXT LỊCH EVERGREEN (ShipmentLink "Schedules_yyyymmdd.txt")
+// Mỗi service là 1 bảng cột cố định: 30 ký tự tên tàu + voyage, mỗi cảng 16 ký tự "ARR   DEP" (mm/dd, không có năm).
+// Dấu * sau ngày = hàng cho cảng đó được chuyển tải (T/T) sang tàu khác → ngày không tin được, bỏ qua.
+// Năm: chọn năm để ngày nằm trong khoảng 300 ngày trước → 150 ngày sau ngày xuất file (lấy từ tên file).
+function parseEmcText_(text, fileName) {
+  const L = String(text).replace(/\r/g, '').split('\n');
+  const m = String(fileName).match(/(20\d{2})(\d{2})(\d{2})/);
+  const base = m ? serial_(+m[1], +m[2], +m[3], 0, 0) : serialFromDate_(new Date(), SpreadsheetApp.getActive().getSpreadsheetTimeZone(), true);
+  const md = (cell, ref) => {                          // "10/30" → serial; ref = ngày ETD (ETA phải sau ETD)
+    const x = String(cell).match(/^(\d{2})\/(\d{2})(\*?)$/);
+    if (!x) return null;
+    const mo = +x[1], d = +x[2];
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    const y = new Date((base - 25569) * 86400000).getUTCFullYear();
+    const cands = [y - 1, y, y + 1].map(yy => serial_(yy, mo, d, 0, 0));
+    const near = cands.filter(c => c >= base - 300 && c <= base + 150);
+    const pool = near.length ? near : cands;
+    const v = ref ? cands.find(c => c >= ref) : pool.reduce((a, c) => Math.abs(c - base) < Math.abs(a - base) ? c : a);
+    return v === undefined ? null : { v, star: x[3] === '*' };
+  };
+  const out = [];
+  let svc = '', ports = [];
+  for (let i = 0; i < L.length; i++) {
+    const l = L[i];
+    if (/^ShipmentLink Sailing Schedules/.test(l)) { const s = (L[i + 1] || '').match(/\(([A-Z0-9]+)\)\s*$/); svc = s ? s[1] : ''; ports = []; continue; }
+    if (/^\s{20,}ARR\s+DEP/.test(l)) {
+      const h = L[i - 2] || '';
+      ports = [];
+      for (let o = 30; o < h.length; o += 16) ports.push({ name: h.substr(o, 15).trim(), o });
+      continue;
+    }
+    if (!ports.length || !/^\S.{29}(\d{2}\/\d{2}|---)/.test(l)) continue;
+    const vv = l.substr(0, 30).trim().match(/^(.*\S)\s+(\S+)$/);
+    if (!vv) continue;
+    const cell = p => {                                 // "10/10 10/11*" → dấu * thuộc cả ô (cảng đó)
+      const raw = l.substr(p.o, 12);
+      const star = raw.indexOf('*') >= 0;
+      const t = v => v.replace('*', '') + (star ? '*' : '');
+      return { arr: t(raw.substr(0, 5).trim()), dep: t(raw.substr(6).trim()) };
+    };
+    ports.forEach((p, k) => {
+      const pol = portCode_(p.name);
+      if (HOME_POLS.indexOf(pol) < 0) return;
+      const c = cell(p);
+      const d = md(c.dep) || md(c.arr);
+      if (!d || d.star) return;                          // tàu không ghé / chuyển tải
+      const seen = {};
+      let prev = d.v;                                    // ngày ở cảng trước – ngày lùi lại = số liệu lỗi của hãng, bỏ qua
+      ports.slice(k + 1).forEach(q => {
+        const pod = portCode_(q.name);
+        if (pod === pol || seen[pod]) return;
+        const cq = cell(q);
+        const a = md(cq.arr, d.v) || md(cq.dep, d.v);
+        if (!a || a.v < prev) return;
+        prev = a.v;
+        seen[pod] = true;
+        if (a.star) return;
+        out.push({
+          car: 'EVERGREEN', svc, ves: vv[1], voy: vv[2], pol, tpol: '', pod, tpod: '', podName: q.name,
+          bk: '', si: '', vgm: '', port: '', etd: d.v, eta: a.v, ts: 'Direct', tsp: '', src: fileName,
+          note: /^[A-Z]{5}$/.test(pod) ? '' : 'kiểm tra mã cảng ' + q.name
+        });
+      });
+    });
+  }
+  return out;
+}
+
 // Bảng "Departures" của RCL: cut-off CY/SI thực tế, terminal, thông báo (Delay ETD, Port Omission)
 function collectDepartures_(g, deps) {
   for (let i = 0; i < g.length; i++) {
@@ -465,6 +554,8 @@ function upsert_(ss, recs) {
         if (rec[key] && Math.abs((o || 0) - rec[key]) > 1e-6) changes.push(`${label} ${o ? fmt_(o) : '(trống)'} → ${fmt_(rec[key])}`);
       });
       if (!changes.length) { same++; return; }
+      const COLS = { svc: 3, ves: 4, pol: 6, tpol: 7, bk: 10, si: 11, vgm: 12, port: 13, ts: 19, tsp: 20 };
+      Object.keys(COLS).forEach(k => { if (rec[k] === '' || rec[k] === undefined || rec[k] === null) rec[k] = old[COLS[k]]; });
       rec.note = [String(old[22] || ''), `Cập nhật ${fmt_(today)}: ${changes.join('; ')}`].filter(Boolean).join(' | ');
       writeRow_(sh, CFG.FIRST_ROW + i, rec);
       updated++;

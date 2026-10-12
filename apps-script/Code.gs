@@ -3,6 +3,7 @@
  * Dán toàn bộ file này vào Extensions → Apps Script (thay nội dung Code.gs).
  * Cần bật dịch vụ "Drive API" (Services → + → Drive API → Add) để đọc file Excel.
  * Dán dữ liệu (17 cột, từ ô A2) vào sheet MAU_NHAP → tự nhập luôn (onEdit), không cần bấm menu.
+ * Email lịch Evergreen (file .txt đính kèm) gửi về Gmail → mỗi giờ tự lấy vào Inbox rồi nhập.
  */
 
 const CFG = {
@@ -15,7 +16,10 @@ const CFG = {
   FIRST_ROW: 2,
   CAPACITY: 1500,         // số dòng tối đa của LICH_CU_THE (script tự mở rộng ở lần chạy đầu)
   LAST_ROW: 1501,
-  KEEP_DAYS: 30           // Dọn dẹp: xoá chuyến có ETD cũ hơn 30 ngày
+  KEEP_DAYS: 30,          // Dọn dẹp: xoá chuyến có ETD cũ hơn 30 ngày
+  // Gmail: email lịch Evergreen có file .txt đính kèm trong 7 ngày gần nhất; chỉ lấy file có nội dung lịch ShipmentLink
+  GMAIL_QUERY: 'from:schedules@shipmentlink.com has:attachment newer_than:7d',
+  GMAIL_LABEL: 'Lich tau'  // nhãn gắn vào email đã lấy lịch (để dễ tìm lại)
 };
 
 // Cột nhập liệu của LICH_CU_THE (các cột còn lại là công thức – không ghi đè)
@@ -60,7 +64,7 @@ const MON = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SE
 // ------------------------------------------------------------------ MENU
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('🚢 Lịch tàu')
-    .addItem('📥 Nhập lịch từ Inbox (Drive)', 'importInbox')
+    .addItem('📥 Nhập lịch (Gmail + Inbox Drive)', 'importInbox')
     .addItem('📋 Nhập từ sheet MAU_NHAP', 'importPasteSheet')
     .addSeparator()
     .addItem('🧹 Xoá lịch đã chạy quá 30 ngày', 'purgeOld')
@@ -78,12 +82,16 @@ function importInbox() {
   const inbox = DriveApp.getFolderById(CFG.INBOX_ID);
   const done = DriveApp.getFolderById(CFG.DONE_ID);
   const fail = DriveApp.getFolderById(CFG.FAIL_ID);
-  const files = inbox.getFiles();
   const summary = [];
-  let any = false;
+  try {
+    const got = pullGmail_(inbox, ss.getSpreadsheetTimeZone());
+    if (got.length) summary.push(`📧 Gmail: lấy ${got.length} file lịch → ${got.join(', ')}`);
+  } catch (e) {
+    summary.push('⚠️ Chưa đọc được Gmail (' + (e.message || e) + '). Chạy menu 📥 một lần để cấp quyền Gmail.');
+  }
+  const files = inbox.getFiles();
   while (files.hasNext()) {
     const f = files.next();
-    any = true;
     try {
       const sheets = readSheets_(f);
       const all = parseFile_(sheets, f.getName());
@@ -102,8 +110,38 @@ function importInbox() {
       summary.push(`❌ ${f.getName()}: ${e.message || e} → đã chuyển sang thư mục "Can bo doc"`);
     }
   }
-  if (!any && !isManual_()) return;                    // chạy theo giờ & Inbox trống: im lặng
-  notify_(any ? summary.join('\n') : 'Inbox trống – không có file mới.');
+  if (!summary.length && !isManual_()) return;         // chạy theo giờ & không có gì mới: im lặng
+  notify_(summary.length ? summary.join('\n') : 'Gmail và Inbox đều không có lịch mới.');
+}
+
+// ------------------------------------------------------------------ GMAIL → INBOX
+// Email có file .txt lịch ShipmentLink (Evergreen) đính kèm → lưu file vào Inbox (tên có ngày email để biết năm).
+// Mỗi email chỉ lấy 1 lần (nhớ mã email trong DocumentProperties) và được gắn nhãn "Lich tau".
+function pullGmail_(inbox, tz) {
+  const props = PropertiesService.getDocumentProperties();
+  const seen = JSON.parse(props.getProperty('GMAIL_SEEN') || '[]');
+  const got = [];
+  let label = null;
+  GmailApp.search(CFG.GMAIL_QUERY, 0, 30).forEach(th => {
+    let used = false;
+    th.getMessages().forEach(msg => {
+      const id = msg.getId();
+      if (seen.indexOf(id) >= 0) return;
+      seen.push(id);
+      const ymd = new Date((serialFromDate_(msg.getDate(), tz, true) - 25569) * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+      msg.getAttachments().forEach(att => {
+        if (!/\.txt$/i.test(att.getName()) && !/^text\/plain/i.test(att.getContentType())) return;
+        if (!/ShipmentLink Sailing Schedules/.test(att.getDataAsString('UTF-8'))) return;
+        const name = `EMC_${ymd}_${att.getName()}`;
+        inbox.createFile(att.copyBlob().setName(name));
+        got.push(name);
+        used = true;
+      });
+    });
+    if (used) { label = label || GmailApp.getUserLabelByName(CFG.GMAIL_LABEL) || GmailApp.createLabel(CFG.GMAIL_LABEL); th.addLabel(label); }
+  });
+  props.setProperty('GMAIL_SEEN', JSON.stringify(seen.slice(-300)));
+  return got;
 }
 
 // ------------------------------------------------------------------ IMPORT FROM PASTE SHEET
@@ -615,7 +653,7 @@ function upgradeNow() {
 function enableHourly() {
   disableHourly(true);
   ScriptApp.newTrigger('importInbox').timeBased().everyHours(1).create();
-  notify_('⏰ Đã bật: mỗi giờ tự nhập file mới trong thư mục Inbox.');
+  notify_('⏰ Đã bật: mỗi giờ tự lấy lịch từ Gmail và nhập file mới trong thư mục Inbox.');
 }
 function disableHourly(silent) {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'importInbox').forEach(t => ScriptApp.deleteTrigger(t));

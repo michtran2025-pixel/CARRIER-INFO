@@ -14,7 +14,7 @@ const day = s => new Date((s - 25569) * 86400000).toISOString().slice(0, 10);
 const NOW = Date.UTC(2026, 9, 12, 3, 0);
 class FixedDate extends Date { constructor(...a) { a.length ? super(...a) : super(NOW); } static now() { return NOW; } }
 
-function setup() {
+function setup(gmail) {
   const sheets = {
     LICH_CU_THE: makeSheet('LICH_CU_THE', 1501, 27),
     PORTS: makeSheet('PORTS', 60, 3),
@@ -28,16 +28,28 @@ function setup() {
     getName: () => FILE, getMimeType: () => 'text/plain', getId: () => 'f1',
     getBlob: () => ({ getDataAsString: () => TEXT }), moveTo: f => moved.push(f.id)
   };
-  const folder = (id, files) => ({ id, getFiles: () => { let i = 0; return { hasNext: () => i < files.length, next: () => files[i++] }; } });
-  const folders = { inbox: folder('inbox', [file]), done: folder('done', []), fail: folder('fail', []) };
+  const folder = (id, files) => ({
+    id, files,
+    getFiles: () => { let i = 0; return { hasNext: () => i < files.length, next: () => files[i++] }; },
+    createFile: blob => { files.push({ getName: () => blob.name, getMimeType: () => 'text/plain', getId: () => blob.name,
+      getBlob: () => ({ getDataAsString: () => blob.text }), moveTo: f => moved.push(f.id) }); }
+  });
+  const folders = { inbox: folder('inbox', gmail ? [] : [file]), done: folder('done', []), fail: folder('fail', []) };
+  const props = {};
+  const labels = [];
   const toasts = [];
   const { ctx } = loadCodeGs(sheets, toasts, {
     Date: FixedDate,
     MimeType: { GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet', CSV: 'text/csv', PLAIN_TEXT: 'text/plain' },
+    PropertiesService: { getDocumentProperties: () => ({ getProperty: k => (k === 'CAP' ? '1500' : props[k] || null), setProperty: (k, v) => { props[k] = v; } }) },
+    GmailApp: gmail ? {
+      search: q => { gmail.queries.push(q); return gmail.threads.map(t => Object.assign({ addLabel: l => labels.push(l.name) }, t)); },
+      getUserLabelByName: () => null, createLabel: n => ({ name: n })
+    } : undefined,
     DriveApp: { getFolderById: id => ({ '13vrfYKmay8tTryUyLblcC9ttyQrrQ3m2': folders.inbox, '1E_ux26FSoNJdt8NjUHocWtJHmTS83fOy': folders.done, '1QPfJKhaGhzlHGvXiSH90L762FXA0qqBg': folders.fail })[id] }
   });
   ctx.console = { log: () => {} };
-  return { sheets, ctx, moved };
+  return { sheets, ctx, moved, folders, labels };
 }
 const rowsOf = sh => sh.g.slice(1).filter(r => r[2] !== '');
 
@@ -106,4 +118,29 @@ const rowsOf = sh => sh.g.slice(1).filter(r => r[2] !== '');
   assert.strictEqual(moved.length, 0);
 }
 
-console.log('✅ File text lịch Evergreen: đọc đúng, nhập vào Sổ tay, gộp với dữ liệu bookmarklet – đạt');
+// 5) Email từ schedules@shipmentlink.com → Inbox → nhập; chạy lại không lấy trùng
+{
+  const att = (name, text, type = 'text/plain') => ({
+    getName: () => name, getContentType: () => type, getDataAsString: () => text,
+    copyBlob: () => ({ setName(n) { return { name: n, text }; } })
+  });
+  const gmail = {
+    queries: [],
+    threads: [{ getMessages: () => [{
+      getId: () => 'm1', getDate: () => new Date(Date.UTC(2026, 9, 12, 1)),
+      getAttachments: () => [att('Schedules_20261012.txt', TEXT), att('ghi_chu.txt', 'không phải lịch'), att('logo.png', 'x', 'image/png')]
+    }] }]
+  };
+  const { sheets, ctx, folders, labels } = setup(gmail);
+  ctx.importInbox();
+  assert.ok(/^from:schedules@shipmentlink\.com /.test(gmail.queries[0]), 'lọc theo người gửi');
+  assert.deepStrictEqual(folders.inbox.files.map(f => f.getName()), ['EMC_20261012_Schedules_20261012.txt'], 'chỉ lấy file lịch');
+  assert.deepStrictEqual(labels, ['Lich tau'], 'gắn nhãn email');
+  const n = rowsOf(sheets.LICH_CU_THE).length;
+  assert.ok(n > 150, 'đã nhập: ' + n);
+  ctx.importInbox();
+  assert.strictEqual(folders.inbox.files.length, 1, 'email đã lấy thì không lấy lại');
+  assert.strictEqual(rowsOf(sheets.LICH_CU_THE).length, n);
+}
+
+console.log('✅ File text lịch Evergreen: đọc đúng, nhập vào Sổ tay, gộp với dữ liệu bookmarklet, lấy từ Gmail – đạt');

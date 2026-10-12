@@ -1,5 +1,5 @@
 // Tạo dòng "javascript:…" để dán vào ô URL của bookmark.
-// Chạy: node bookmarklet/build.js  → ghi bookmarklet/evergreen.bookmarklet.txt
+// Chạy: node bookmarklet/build.js  → ghi evergreen.bookmarklet.txt và trang cài đặt Cai_dat_bookmarklet.html
 const fs = require('fs');
 const path = require('path');
 
@@ -17,6 +17,9 @@ if (require.main === module) {
   const src = fs.readFileSync(path.join(__dirname, 'evergreen.js'), 'utf8');
   const out = build(src);
   fs.writeFileSync(path.join(__dirname, 'evergreen.bookmarklet.txt'), out + '\n');
-  console.log('OK – ' + out.length + ' ký tự → bookmarklet/evergreen.bookmarklet.txt');
+  const page = fs.readFileSync(path.join(__dirname, 'cai-dat.template.html'), 'utf8')
+    .replace('__EMC__', out.replace(/&/g, '&amp;').replace(/"/g, '&quot;'));
+  fs.writeFileSync(path.join(__dirname, 'Cai_dat_bookmarklet.html'), page);
+  console.log('OK – ' + out.length + ' ký tự → evergreen.bookmarklet.txt, Cai_dat_bookmarklet.html');
 }
 module.exports = { build };

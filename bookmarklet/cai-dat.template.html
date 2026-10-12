@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cài bookmarklet lịch tàu</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; background: #f5f7fb; color: #1d2433; margin: 0; padding: 32px 16px; }
+  .box { max-width: 640px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.sub { color: #5b6475; margin: 0 0 24px; }
+  .btn { display: inline-block; padding: 14px 26px; border-radius: 10px; background: #3b4a8a; color: #fff; font-size: 18px;
+         font-weight: 600; text-decoration: none; cursor: grab; border: 2px dashed #9fb0ff; }
+  .drop { text-align: center; padding: 22px; background: #eef1fb; border-radius: 10px; margin-bottom: 24px; }
+  .drop small { display: block; margin-top: 10px; color: #5b6475; }
+  ol { padding-left: 20px; line-height: 1.7; }
+  kbd { background: #eef1fb; border: 1px solid #cdd5ee; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+  h2 { font-size: 16px; margin: 24px 0 6px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🚢 Cài bookmarklet lịch tàu</h1>
+  <p class="sub">Làm 1 lần. Sau đó trên trang lịch của hãng chỉ cần bấm 1 nút.</p>
+
+  <div class="drop">
+    <a class="btn" href="__EMC__" onclick="alert('Đừng bấm ở đây – hãy KÉO nút này lên thanh dấu trang.'); return false;">Copy lịch EMC</a>
+    <small>⬆️ Kéo nút này thả lên thanh dấu trang của Chrome</small>
+  </div>
+
+  <h2>Cài</h2>
+  <ol>
+    <li>Bấm <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd> để hiện thanh dấu trang (nếu chưa thấy).</li>
+    <li>Giữ chuột vào nút xanh <b>Copy lịch EMC</b> ở trên, <b>kéo</b> lên thanh dấu trang rồi thả ra.</li>
+  </ol>
+
+  <h2>Dùng</h2>
+  <ol>
+    <li>ShipmentLink → <b>Sailing Schedules → Search by Point</b> → ra trang kết quả.</li>
+    <li>Bấm <b>Copy lịch EMC</b> trên thanh dấu trang.</li>
+    <li>Sổ tay → sheet <b>MAU_NHAP</b> → bấm ô <b>A2</b> → <kbd>Ctrl</kbd> + <kbd>V</kbd>. Sổ tay tự nhập, góc dưới hiện thông báo ✅.</li>
+  </ol>
+</div>
+</body>
+</html>

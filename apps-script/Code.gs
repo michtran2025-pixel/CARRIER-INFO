@@ -2,6 +2,7 @@
  * SỔ TAY LỊCH TÀU – Apps Script tự nhập lịch tàu (K+N Hải Phòng)
  * Dán toàn bộ file này vào Extensions → Apps Script (thay nội dung Code.gs).
  * Cần bật dịch vụ "Drive API" (Services → + → Drive API → Add) để đọc file Excel.
+ * Dán dữ liệu (17 cột, từ ô A2) vào sheet MAU_NHAP → tự nhập luôn (onEdit), không cần bấm menu.
  */
 
 const CFG = {
@@ -98,12 +99,24 @@ function importInbox() {
 }
 
 // ------------------------------------------------------------------ IMPORT FROM PASTE SHEET
-function importPasteSheet() {
+// Dán vào MAU_NHAP (khối từ cột A, dòng ≥ 2, ≥ 13 cột – vd. từ bookmarklet "Copy lịch EMC") → tự nhập.
+// Gõ tay từng ô thì không tự nhập (dùng menu 📋 khi gõ xong).
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const r = e.range;
+  if (r.getSheet().getName() !== CFG.PASTE || r.getRow() < 2 || r.getColumn() !== 1 || r.getNumColumns() < 13) return;
+  try { importPasteSheet(true); }
+  catch (err) { e.source.toast(String(err.message || err), '❌ MAU_NHAP – chưa nhập', 15); }
+}
+
+function importPasteSheet(auto) {
+  auto = auto === true;
   const ss = SpreadsheetApp.getActive();
   const sh = ss.getSheetByName(CFG.PASTE);
   if (!sh) throw new Error('Không tìm thấy sheet ' + CFG.PASTE);
+  const say = msg => auto ? ss.toast(msg, '🚢 Lịch tàu', 10) : notify_(msg);
   const last = sh.getLastRow();
-  if (last < 2) { notify_('Sheet MAU_NHAP chưa có dữ liệu (dán từ dòng 2).'); return; }
+  if (last < 2) { say('Sheet MAU_NHAP chưa có dữ liệu (dán từ dòng 2).'); return; }
   const grid = sh.getRange(1, 1, last, sh.getLastColumn()).getValues();
   ensureCapacity_(ss);
   const recs = parseGrid_(grid, 'MAU_NHAP');
@@ -111,7 +124,7 @@ function importPasteSheet() {
   const res = upsert_(ss, recs);
   log_(ss, 'Sheet MAU_NHAP', res);
   sh.getRange(2, 1, last - 1, sh.getLastColumn()).clearContent();
-  notify_(`✅ MAU_NHAP: thêm ${res.added}, cập nhật ${res.updated}, không đổi ${res.same}. Đã xoá vùng dán.`);
+  say(`✅ MAU_NHAP: thêm ${res.added}, cập nhật ${res.updated}, không đổi ${res.same}. Đã xoá vùng dán.`);
 }
 
 // ------------------------------------------------------------------ READ FILE → [{name, values}] (mọi sheet)

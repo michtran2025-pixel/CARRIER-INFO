@@ -10,7 +10,7 @@ const TZ = 'Asia/Ho_Chi_Minh';
 function makeSheet(name, rows, cols) {
   const g = Array.from({ length: rows }, () => Array(cols).fill(''));
   const sh = {
-    g, getName: () => name, getMaxRows: () => g.length,
+    g, f: [], getName: () => name, getMaxRows: () => g.length,
     getLastRow: () => { for (let i = g.length - 1; i >= 0; i--) if (g[i].some(v => v !== '')) return i + 1; return 0; },
     getLastColumn: () => cols,
     insertRowsAfter: (_, n) => { for (let i = 0; i < n; i++) g.push(Array(cols).fill('')); },
@@ -19,6 +19,7 @@ function makeSheet(name, rows, cols) {
       return {
         getRow: () => r, getColumn: () => c, getNumColumns: () => nc, getSheet: () => sh,
         getValues: () => Array.from({ length: nr }, (_, i) => g[r - 1 + i].slice(c - 1, c - 1 + nc)),
+        getFormulas: () => Array.from({ length: nr }, (_, i) => (sh.f[r - 1 + i] || []).slice(c - 1, c - 1 + nc).map(x => x || '')),
         setValues: v => v.forEach((row, i) => row.forEach((x, j) => { g[r - 1 + i][c - 1 + j] = x; })),
         clearContent: () => { for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) g[r - 1 + i][c - 1 + j] = ''; },
         setNumberFormat: () => {}

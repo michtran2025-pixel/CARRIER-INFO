@@ -68,6 +68,7 @@ function onOpen() {
     .addItem('📋 Nhập từ sheet MAU_NHAP', 'importPasteSheet')
     .addSeparator()
     .addItem('🧹 Xoá lịch đã chạy quá 30 ngày', 'purgeOld')
+    .addItem('🧽 Xoá service độ tin cậy "Thấp" (SERVICE_MASTER)', 'removeLowConfidence')
     .addItem('📈 Mở rộng Sổ tay (1.500 dòng)', 'upgradeNow')
     .addSeparator()
     .addItem('⏰ Bật tự nhập mỗi giờ', 'enableHourly')
@@ -641,6 +642,47 @@ function purgeOld() {
   });
   log_(ss, 'Dọn dẹp', null, null, `Xoá ${removed} chuyến có ETD trước ${fmt_(limit)}; còn ${keep.length} dòng.`);
   notify_(`🧹 Đã xoá ${removed} chuyến cũ, còn ${keep.length} dòng.`);
+}
+
+// ------------------------------------------------------------------ XOÁ SERVICE ĐỘ TIN CẬY THẤP (SERVICE_MASTER)
+// Bỏ các service có cột "Độ tin cậy" = Thấp (ước tính từ quá ít lô follow-up). Chỉ dồn các ô nhập liệu,
+// giữ nguyên công thức (ID, Thứ ETD, Thứ cut-off, Số lô, Tỷ lệ, Độ tin cậy, ETD gần nhất, KEY).
+function removeLowConfidence() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName('SERVICE_MASTER');
+  if (!sh) throw new Error('Không tìm thấy sheet SERVICE_MASTER');
+  const N = 100, W = 25;                                   // dòng 2–101, cột A–Y
+  const H = sh.getRange(1, 1, 1, W).getValues()[0].map(v => norm_(v));
+  const iRel = H.indexOf('ĐỘ TIN CẬY');
+  if (iRel < 0) throw new Error('SERVICE_MASTER không có cột "Độ tin cậy"');
+  const rg = sh.getRange(2, 1, N, W);
+  const vals = rg.getValues(), fx = rg.getFormulas();
+  const input = [];                                        // cột nhập liệu = không có công thức ở dòng 2
+  for (let c = 0; c < W; c++) if (!fx[0][c]) input.push(c);
+  const used = r => input.some(c => String(vals[r][c]).trim() !== '');
+  const low = [], keep = [];
+  for (let r = 0; r < N; r++) {
+    if (!used(r)) continue;
+    if (norm_(vals[r][iRel]) === 'THẤP') low.push(r); else keep.push(r);
+  }
+  if (!low.length) { notify_('Không có service nào độ tin cậy "Thấp".'); return; }
+  const iPod = H.indexOf('POD'), iCar = H.indexOf('HÃNG');
+  const list = low.map(r => `${vals[r][iPod]} – ${vals[r][iCar]}`).join(', ');
+  if (isManual_()) {
+    const ui = SpreadsheetApp.getUi();
+    const ok = ui.alert('Xoá ' + low.length + ' service độ tin cậy "Thấp"?', list + '\n\nCòn lại ' + keep.length + ' service. (Có thể khôi phục qua File → Version history.)', ui.ButtonSet.YES_NO);
+    if (ok !== ui.Button.YES) return;
+  }
+  // Ghi lại theo từng đoạn cột nhập liệu liền nhau (không đè lên cột công thức)
+  const segs = [];
+  input.forEach(c => { const last = segs[segs.length - 1]; if (last && last[1] === c - 1) last[1] = c; else segs.push([c, c]); });
+  segs.forEach(([a, b]) => {
+    const rows = keep.map(r => vals[r].slice(a, b + 1));
+    while (rows.length < N) rows.push(Array(b - a + 1).fill(''));
+    sh.getRange(2, a + 1, N, b - a + 1).setValues(rows);
+  });
+  log_(ss, 'SERVICE_MASTER', null, null, `Xoá ${low.length} service độ tin cậy Thấp: ${list}. Còn ${keep.length} service.`);
+  notify_(`🧽 Đã xoá ${low.length} service độ tin cậy "Thấp". Còn ${keep.length} service.`);
 }
 
 function upgradeNow() {
